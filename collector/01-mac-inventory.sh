@@ -119,7 +119,7 @@ echo "==> Output directory: ${OUT}"
   echo "# Configs and dotfiles — ${TS}"
   echo
   echo "## Hidden files in home (dotfiles)"
-  ls -la "${HOME}" | grep '^\-\|^d' | awk '{print $NF}' | grep '^\.'
+  find "${HOME}" -maxdepth 1 -name '.*' ! -name '.' ! -name '..' -exec basename {} \; 2>/dev/null | sort
   echo
   echo "## ~/.config subfolders"
   find "${HOME}/.config" -maxdepth 1 -mindepth 1 2>/dev/null
@@ -128,7 +128,7 @@ echo "==> Output directory: ${OUT}"
   du -sh "${HOME}/Library/Application Support/"*/ 2>/dev/null | sort -rh | head -50
   echo
   echo "## ~/Library/Preferences (.plist list — apps storing settings)"
-  ls "${HOME}/Library/Preferences" 2>/dev/null | grep '\.plist$'
+  find "${HOME}/Library/Preferences" -maxdepth 1 -name '*.plist' -exec basename {} \; 2>/dev/null | sort
 } > "${OUT}/05-configs-dotfiles.md"
 
 # ---------------------------------------------------------------
