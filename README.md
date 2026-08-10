@@ -1,4 +1,6 @@
-# mac-migration
+> **Language / Nyelv:** English | [Magyar](README_HU.md)
+
+MAC Migration Tool
 
 Three-phase CLI tool for conscious macOS machine migration (e.g. M1 → new M-series Mac).
 Use this when you do **not** want a 1:1 clone (Migration Assistant), but also do not
@@ -7,30 +9,30 @@ want to lose custom data (sample libraries, exports, oddly named project folders
 ## Why not a fixed rules script?
 
 A static script only catches patterns you thought of in advance (`Ableton`, `Samples`, etc.).
-Folders like `2023-08-19 wedding export` or `sample stash v2` need contextual interpretation —
-Phase B uses Vertex AI (Gemini Flash Lite) for that, with a rule-based fallback if you
-skip the cloud API.
+Folders like `final-export` or `samples-v2` need contextual interpretation —
+Phase B uses Google Enterprise Agent Platform (Gemini Flash Lite) for that, with a rule-based
+fallback if you skip the cloud API.
 
 ## Architecture
 
 | Phase | Script | Output |
 |-------|--------|--------|
 | **A — Collect** | `collector/*.sh` | `~/migration-inventory/` (Markdown + JSON) |
-| **B — Analyze** | `analyzer/analyze.py` | `analysis-report.md` + `analysis-report.json` |
-| **C — Plan** | `planner/generate-plan.py` | `migration-plan.md` + `migration-plan.json` |
+| **B — Analyze** | `analyzer/analyze.py` | `analysis-report.md` + `analysis-report_HU.md` (+ JSON) |
+| **C — Plan** | `planner/generate-plan.py` | `migration-plan.md` + `migration-plan_HU.md` (+ JSON) |
 
 All user data stays **local** under `~/migration-inventory/`. Only folder metadata
-(path, size, extension stats — never file contents or credentials) is sent to Vertex AI.
+(path, size, extension stats — never file contents or credentials) is sent to Agent Platform.
 
 ## Prerequisites
 
 - macOS (source machine)
 - **Homebrew** (recommended, not required for collector)
 - **Python 3.11+**
-- **gcloud CLI** (only for Phase B with Vertex AI)
-- GCP project with Vertex AI API enabled
+- **gcloud CLI** (only for Phase B with Agent Platform)
+- GCP project with Enterprise Agent Platform API enabled
 
-### ADC setup (Vertex AI)
+### ADC setup (Agent Platform)
 
 ```bash
 gcloud auth application-default login
@@ -49,14 +51,14 @@ chmod +x mac-migration
 # Install Python deps (once)
 pip install -r analyzer/requirements.txt
 
-# Full pipeline (English output)
+# Full pipeline (bilingual reports; English console)
 ./mac-migration all --project YOUR_PROJECT_ID
 
-# Hungarian output
+# Hungarian console messages
 ./mac-migration all --project YOUR_PROJECT_ID --lang hu
 
-# Without Vertex AI (rule-based fallback)
-./mac-migration all --fallback --lang hu
+# Without Agent Platform (rule-based fallback)
+./mac-migration all --fallback
 ```
 
 ### Step by step
@@ -80,8 +82,8 @@ All configuration is via **CLI flags** (no hardcoded project ID):
 |------|---------|-------------|
 | `--project` | _(required)_ | GCP project ID |
 | `--model` | `gemini-3.5-flash-lite` | Global Gemini model |
-| `--location` | `global` | Vertex AI location |
-| `--lang` | `en` | Output language (`en` or `hu`) |
+| `--location` | `global` | Agent Platform location |
+| `--lang` | `en` | Console language (`en` or `hu`); reports always bilingual |
 | `--batch-size` | `30` | Folders per API call |
 | `--min-size-mb` | `100` | Skip smaller folders |
 | `--fallback` | off | Rule-based analysis, no cloud |
@@ -110,14 +112,14 @@ All configuration is via **CLI flags** (no hardcoded project ID):
 
 ## FAQ
 
-### I don't have Vertex AI access
+### I don't have Agent Platform access
 
 Use `--fallback` for rule-based categorization. Less accurate for oddly named folders,
 but fully offline after collection:
 
 ```bash
-./mac-migration analyze --fallback --lang hu
-./mac-migration plan --lang hu
+./mac-migration analyze --fallback
+./mac-migration plan
 ```
 
 ### How long does Phase A take?
@@ -145,4 +147,7 @@ shellcheck collector/*.sh mac-migration
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[CloudMentor Use License](LICENSE) — free use (including commercial) and
+redistribution of **unmodified** copies. **Modifications require written
+permission** from CloudMentor ([info@cloudmentor.hu](mailto:info@cloudmentor.hu)).
+Hungarian summary: [LICENSE_HU.md](LICENSE_HU.md).
