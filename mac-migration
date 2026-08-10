@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# mac-migration — unified CLI for all three phases
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INVENTORY_DIR="${HOME}/migration-inventory"
+
+usage() {
+  cat <<'EOF'
+mac-migration — macOS conscious migration assistant
+
+Usage:
+  mac-migration collect
+  mac-migration analyze [opts]
+  mac-migration plan [opts]
+  mac-migration guide [opts]
+  mac-migration restore [component] [opts]
+  mac-migration view [opts]
+  mac-migration all [opts]
+
+Options (analyze / all):
+  --project ID           GCP project ID (required unless --fallback)
+  -i, --interactive      Interactive AI review per app/dotfolder (recommended)
+  --model NAME           Agent Platform model ID (default: gemini-3.5-flash-lite, global)
+  --location LOC         Agent Platform location (default: global)
+  --fallback             Rule-based analysis without Agent Platform
+  --skip-gcp-setup       Skip prerequisite checks + API enable
+  --batch-size N         Folders per LLM request (default: 30)
+  --min-size-mb N        Min folder size in MB (default: 100)
+
+Examples:
+  ./mac-migration collect
+  gcloud auth application-default login   # once, outside the tool (ADC only)
+  ./mac-migration analyze --project YOUR_PROJECT_ID --interactive
+  ./mac-migration analyze --project YOUR_PROJECT_ID -i
+  ./mac-migration analyze --fallback
+  ./mac-migration all --project YOUR_PROJECT_ID
+  ./mac-migration guide
+  ./mac-migration restore              # on new Mac — apply everything dynamically
+  ./mac-migration restore aliases      # only shell aliases
+  ./mac-migration view
+EOF
+}
+
+require_python_deps() {
+  if ! python3 -c "import google.auth" 2>/dev/null; then
+    echo "==> Installing Python dependencies..."
+    python3 -m pip install -r "${SCRIPT_DIR}/analyzer/requirements.txt"
+  fi
+}
+
+phase_collect() {
+  echo "==> Phase A: Collector"
+  echo "    Step 1/11 — system inventory"
+  bash "${SCRIPT_DIR}/collector/01-mac-inventory.sh"
+  echo "    Step 2/11 — shell & runtime environment"
+  python3 "${SCRIPT_DIR}/collector/capture-environment.py" "${INVENTORY_DIR}"
+  echo "    Step 3/11 — Homebrew full inventory"
+  python3 "${SCRIPT_DIR}/collector/capture_homebrew.py" "${INVENTORY_DIR}"
+  echo "    Step 4/11 — VS Code / Cursor extensions"
+  python3 "${SCRIPT_DIR}/collector/capture_vscode.py" "${INVENTORY_DIR}"
+  echo "    Step 5/11 — Quick Actions (Automator + Shortcuts)"
+  python3 "${SCRIPT_DIR}/collector/capture_quick_actions.py" "${INVENTORY_DIR}"
+  echo "    Step 6/11 — audio devices (BlackHole, HAL plugins)"
+  python3 "${SCRIPT_DIR}/collector/capture_audio_devices.py" "${INVENTORY_DIR}"
+  echo "    Step 7/11 — AI, dev & creative tools"
+  python3 "${SCRIPT_DIR}/collector/detect_tools.py" "${INVENTORY_DIR}"
+  echo "    Step 8/11 — folder profiler"
+  bash "${SCRIPT_DIR}/collector/02-folder-profiler.sh"
+  echo "    Step 9/11 — custom paths (non-stock macOS)"
+  python3 "${SCRIPT_DIR}/collector/capture_custom_paths.py" "${INVENTORY_DIR}"
+  echo "    Step 10/11 — full system inventory (everything else)"
+  python3 "${SCRIPT_DIR}/collector/capture_system_inventory.py" "${INVENTORY_DIR}"
+  echo "    Step 11/11 — restore manifest (dynamic apply on new Mac)"
+  python3 "${SCRIPT_DIR}/restorer/manifest.py" "${INVENTORY_DIR}" "${SCRIPT_DIR}"
+  echo "==> Phase A complete. Output: ${INVENTORY_DIR}/"
+  echo "    On new Mac: bash ${INVENTORY_DIR}/restore.sh"
+  echo "    Or: ${SCRIPT_DIR}/mac-migration restore all"
+}
+
+phase_analyze() {
+  echo "==> Phase B: Analyzer"
+  require_python_deps
+  python3 "${SCRIPT_DIR}/analyzer/analyze.py" "$@"
+}
+
+phase_plan() {
+  echo "==> Phase C: Migration plan"
+  python3 "${SCRIPT_DIR}/planner/generate-plan.py" "$@"
+}
+
+phase_guide() {
+  echo "==> Phase D: Reinstall guide"
+  python3 "${SCRIPT_DIR}/planner/generate-reinstall-guide.py" "$@"
+}
+
+phase_restore() {
+  echo "==> Restore (new Mac)"
+  python3 "${SCRIPT_DIR}/restorer/restore.py" "$@"
+}
+
+phase_view() {
+  echo "==> Dashboard"
+  python3 "${SCRIPT_DIR}/viewer/generate_dashboard.py" "$@"
+}
+
+parse_all_args() {
+  ANALYZE_ARGS=()
+  PLAN_ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project|--model|--location|--batch-size|--min-size-mb|--input|--output|--output-json|--decisions)
+        ANALYZE_ARGS+=("$1" "$2")
+        shift 2
+        ;;
+      -i|--interactive|--no-resume|--fallback|--skip-gcp-setup)
+        ANALYZE_ARGS+=("$1")
+        shift
+        ;;
+      *)
+        echo "Unknown option for 'all': $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+CMD="${1:-}"
+shift || true
+
+case "${CMD}" in
+  collect)
+    phase_collect
+    ;;
+  analyze)
+    phase_analyze "$@"
+    ;;
+  plan)
+    phase_plan "$@"
+    ;;
+  guide)
+    phase_guide "$@"
+    ;;
+  restore)
+    phase_restore "$@"
+    ;;
+  view)
+    phase_view "$@"
+    ;;
+  all)
+    parse_all_args "$@"
+    phase_collect
+    phase_analyze "${ANALYZE_ARGS[@]}"
+    phase_plan "${PLAN_ARGS[@]}"
+    phase_guide
+    echo "==> All phases complete."
+    echo "    On new Mac run: bash ${INVENTORY_DIR}/restore.sh"
+    echo "    Or: ${SCRIPT_DIR}/mac-migration restore all"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${CMD}" >&2
+    usage
+    exit 1
+    ;;
+esac

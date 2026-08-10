@@ -2,7 +2,7 @@
 
 MAC Migrációs Eszköz
 
-Háromfázisú CLI eszköz tudatos macOS gép-migrációhoz (pl. M1 → új M-series Mac).
+CLI eszköz tudatos macOS gép-migrációhoz (pl. M1 → új M-series Mac).
 Akkor használd, ha **nem** akarsz 1:1 klónozást (Migration Assistant), de az egyedi
 adatokat (sample library, exportok, szabálytalanul elnevezett mappák) sem akarod elveszíteni.
 
@@ -17,9 +17,12 @@ használja erre, szabály alapú fallbackkel, ha nem akarsz felhő API-t.
 
 | Fázis | Script | Kimenet |
 |-------|--------|---------|
-| **A — Collect** | `collector/*.sh` | `~/migration-inventory/` (Markdown + JSON, en + hu) |
+| **A — Collect** | `collector/*` (11 lépés) | `~/migration-inventory/` (Markdown + JSON) |
 | **B — Analyze** | `analyzer/analyze.py` | `analysis-report.md` + `analysis-report_HU.md` (+ JSON) |
 | **C — Plan** | `planner/generate-plan.py` | `migration-plan.md` + `migration-plan_HU.md` (+ JSON) |
+| **D — Guide** | `planner/generate-reinstall-guide.py` | `reinstall-guide.md` + `reinstall-guide_HU.md` |
+| **Restore** | `restorer/restore.py` | Új Mac: aliasok, shell, Homebrew, VS Code, Quick Actions, audio |
+| **View** | `viewer/generate_dashboard.py` | `dashboard.html` |
 
 Minden felhasználói adat **lokálisan** marad a `~/migration-inventory/` alatt. Csak mappa
 metaadat (útvonal, méret, kiterjesztés-statisztika — soha fájltartalom vagy credential)
@@ -30,17 +33,23 @@ kerül az Agent Platformra.
 - macOS (forrás gép)
 - **Homebrew** (ajánlott, collectorhez nem kötelező)
 - **Python 3.11+**
-- **gcloud CLI** (csak B fázishoz, Agent Platform)
-- GCP projekt Enterprise Agent Platform API-val
+- GCP projekt billinggel (AI analyze-hoz; `--fallback`-kel opcionális)
+- **Application Default Credentials (ADC)** — nincs API kulcs, nincs JSON kulcsfájl
 
-### ADC beállítás (Agent Platform)
+### Hitelesítés (csak ADC)
+
+**Nem támogatott:** API kulcs, service account JSON kulcs, `GOOGLE_APPLICATION_CREDENTIALS`.
 
 ```bash
 gcloud auth application-default login
-gcloud config set project YOUR_PROJECT_ID
 ```
 
-Nincs API kulcs — csak Application Default Credentials (ADC).
+Az első `analyze` futtatáskor a mac-migration automatikusan a háttérben:
+
+1. Ellenőrzi az ADC-t (`google.auth.default()`)
+2. Engedélyezi a **Vertex AI API**-t (`aiplatform.googleapis.com`) a `--project` projektben
+
+`--skip-gcp-setup`, ha az API már engedélyezve van.
 
 ## Gyors indulás
 
@@ -49,45 +58,70 @@ git clone <repo-url> mac-migration
 cd mac-migration
 chmod +x mac-migration
 
-# Python függőségek (egyszer)
 pip install -r analyzer/requirements.txt
 
-# Teljes folyamat (kétnyelvű riportok; angol konzol)
-./mac-migration all --project YOUR_PROJECT_ID
-
-# Magyar konzolüzenetek
-./mac-migration all --project YOUR_PROJECT_ID --lang hu
-
-# Agent Platform nélkül (fallback)
+./mac-migration all --project YOUR_PROJECT_ID -i
 ./mac-migration all --fallback
 ```
 
 ### Lépésről lépésre
 
 ```bash
-# A fázis — leltár + mappa-profiler (nagy home-nál percek)
+# A fázis — teljes leltár (11 lépés, nagy home-nál 10–30 perc)
 ./mac-migration collect
 
-# B fázis — LLM kategorizálás
-./mac-migration analyze --project YOUR_PROJECT_ID
+# B fázis — interaktív AI felülvizsgálat (ajánlott)
+./mac-migration analyze --project YOUR_PROJECT_ID --interactive
 
 # C fázis — checklist
 ./mac-migration plan
+
+# D fázis — önálló újratelepítési útmutató
+./mac-migration guide
+
+# HTML dashboard
+./mac-migration view
+
+# Új Mac-en — automatikus visszaállítás
+bash ~/migration-inventory/restore.sh
+# vagy: ./mac-migration restore all
 ```
 
-## Konfiguráció
+### A fázis — mit gyűjt?
 
-Minden **CLI flag**-gel állítható (nincs hardcoded project ID):
+A collect **11 lépésben** a teljes gépet feltérképezi:
+
+| # | Kimenet | Mit |
+|---|---------|-----|
+| 1 | `01`–`08` *.md | Appok, csomagkezelők, runtime-ok, dotfile-ok, auth, szerkesztők |
+| 2 | `09-shell-environment.md` | Shell, aliasok, pyenv, nvm, PATH |
+| 3 | `12-homebrew-full.md` | Minden Homebrew csomag |
+| 4 | `11-vscode-extensions.md` | VS Code / Cursor bővítmények |
+| 5 | `14-quick-actions.md` | Quick Actions + Shortcuts |
+| 6 | `15-audio-devices.md` | BlackHole, HAL driverek, DJ eszközök |
+| 7 | `10-ai-dev-creative-tools.md` | AI, dev, kreatív appok |
+| 8 | `collector-output.json` | 7000+ mappa-profil (`~/.*` dot mappák is) |
+| 9 | `13-custom-paths.md` | Nem-alap macOS útvonalak |
+| 10 | `16-full-system-inventory.md` | Login items, böngésző bővítmények, LaunchAgents, VPN, cron, git, Docker, Alfred/Karabiner, iTerm, fontok, nyomtatók, Wi‑Fi, Bluetooth, App Store |
+| 11 | `restore-manifest.json` + `restore.sh` | Automatikus visszaállítási terv |
+
+**Fő JSON fájlok:** `system-inventory.json`, `environment-snapshot.json`, `homebrew-inventory.json`, `vscode-extensions.json`, `quick-actions-inventory.json`, `audio-devices-inventory.json`, `tools-inventory.json`, `custom-paths.json`, `restore-manifest.json`
+
+**Automatikus visszaállítás az új Mac-en:** `bash ~/migration-inventory/restore.sh` — aliasok, shell init, Homebrew, VS Code, Quick Actions, audio.
+
+**Restore komponensek:** `./mac-migration restore [aliases|shell|homebrew|vscode|quick-actions|audio|all]`
+
+## Konfiguráció
 
 | Flag | Alapértelmezés | Leírás |
 |------|----------------|--------|
 | `--project` | _(kötelező)_ | GCP project ID |
-| `--model` | `gemini-3.5-flash-lite` | Globális Gemini modell |
-| `--location` | `global` | Agent Platform location |
-| `--lang` | `en` | Konzol nyelve (`en`/`hu`); riportok mindig kétnyelvűek |
-| `--batch-size` | `30` | Mappák API hívásonként |
-| `--min-size-mb` | `100` | Ennél kisebb mappák kihagyása |
+| `--model` | `gemini-3.5-flash-lite` | Gemini 3.5 Flash Lite (globális modell ID) |
+| `--location` | `global` | Agent Platform location (global endpoint) |
+| `--batch-size` | `30` | Mappák API hívásonként (batch mód) |
+| `--min-size-mb` | `100` | Ennél kisebb mappák kihagyása (batch mód) |
 | `--fallback` | ki | Szabály alapú elemzés, felhő nélkül |
+| `-i`, `--interactive` | ki | AI felülvizsgálat komponensenként (ajánlott) |
 
 ## Mappa kategóriák (B fázis)
 
@@ -106,39 +140,32 @@ Minden **CLI flag**-gel állítható (nincs hardcoded project ID):
 
 ## Biztonság
 
-- Érzékeny mappák (`.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/gcloud` stb.)
-  **ki vannak zárva** a profilozásból JSON export előtt.
+- Érzékeny mappák (`.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/gcloud` stb.) **`sensitive` jelzéssel profilozva** — csak metaadat, soha fájltartalom.
 - Auth szekció: csak létezés/darabszám — secret tartalom nem kerül ki.
 - Git config értékek redaktálva a leltárban.
+- Jelszavak, SSH kulcsok, Keychain tartalom **soha** nem másolódik automatikusan.
 
 ## GYIK
 
 ### Nincs Agent Platform hozzáférésem
 
-Használd a `--fallback` kapcsolót. Kevesebb pontosság szokatlan mappaneveknél,
-de a gyűjtés után teljesen offline:
-
 ```bash
-./mac-migration analyze --fallback
+./mac-migration analyze --fallback --interactive
 ./mac-migration plan
 ```
 
 ### Mennyi ideig tart az A fázis?
 
-A home méretétől függ. Nagy `~/Library` esetén több perc; 100 mappánként progress.
+A home méretétől függ. Nagy `~/Library` esetén 10–30 perc; 100 mappánként progress.
 
 ### Hova kerül a kimenet?
 
 Minden a `~/migration-inventory/` alá — nem kerül gitbe.
 
-### Melyik modell és régió?
-
-Alapértelmezés: `gemini-3.5-flash-lite` @ `global`.
-
 ## Fejlesztés
 
 ```bash
-pytest analyzer/tests/ -v
+pytest collector/tests/ analyzer/tests/ planner/tests/ restorer/tests/ -q
 shellcheck collector/*.sh mac-migration
 ```
 

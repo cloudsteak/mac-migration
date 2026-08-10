@@ -1,0 +1,43 @@
+"""Registry of every migration-relevant inventory category on macOS."""
+
+from __future__ import annotations
+
+# Each category: id, label, restore component (if any)
+INVENTORY_CATEGORIES: list[dict] = [
+    {"id": "applications", "label": "Applications", "json_key": "applications"},
+    {"id": "homebrew", "label": "Homebrew packages", "json_key": "homebrew", "restore": "homebrew"},
+    {"id": "vscode_extensions", "label": "VS Code / Cursor extensions", "json_key": "vscode", "restore": "vscode"},
+    {"id": "shell_aliases", "label": "Shell aliases", "json_key": "aliases", "restore": "aliases"},
+    {"id": "shell_init", "label": "Shell init (pyenv, nvm, brew)", "json_key": "shell", "restore": "shell"},
+    {"id": "quick_actions", "label": "Quick Actions", "json_key": "quick_actions", "restore": "quick-actions"},
+    {"id": "audio_devices", "label": "Audio devices", "json_key": "audio", "restore": "audio"},
+    {"id": "login_items", "label": "Login items", "json_key": "login_items"},
+    {"id": "launch_agents", "label": "LaunchAgents / Daemons", "json_key": "launch_agents"},
+    {"id": "browser_extensions", "label": "Browser extensions", "json_key": "browser_extensions"},
+    {"id": "git_config", "label": "Git configuration", "json_key": "git_config"},
+    {"id": "vpn_profiles", "label": "VPN profiles", "json_key": "vpn_profiles"},
+    {"id": "cron_jobs", "label": "Cron / scheduled jobs", "json_key": "cron_jobs"},
+    {"id": "keyboard_shortcuts", "label": "Keyboard shortcuts", "json_key": "keyboard_shortcuts"},
+    {"id": "launcher_tools", "label": "Alfred / Raycast / Karabiner", "json_key": "launcher_tools"},
+    {"id": "terminal_profiles", "label": "Terminal / iTerm profiles", "json_key": "terminal_profiles"},
+    {"id": "docker", "label": "Docker / containers", "json_key": "docker"},
+    {"id": "cloud_cli", "label": "Cloud CLI profiles", "json_key": "cloud_cli"},
+    {"id": "system_extensions", "label": "System extensions", "json_key": "system_extensions"},
+    {"id": "fonts", "label": "User fonts", "json_key": "fonts"},
+    {"id": "printers", "label": "Printers", "json_key": "printers"},
+    {"id": "hosts_file", "label": "/etc/hosts", "json_key": "hosts_file"},
+    {"id": "mac_app_store", "label": "Mac App Store apps", "json_key": "mac_app_store"},
+    {"id": "dot_directories", "label": "Dot directories in ~", "json_key": "dot_directories"},
+    {"id": "custom_paths", "label": "Custom non-stock paths", "json_key": "custom_paths"},
+    {"id": "folder_profiles", "label": "Folder profiles", "json_key": "folder_profiles"},
+    {"id": "ai_dev_tools", "label": "AI / dev / creative tools", "json_key": "ai_dev_tools"},
+    {"id": "package_managers", "label": "npm / pip / gem / cargo", "json_key": "package_managers"},
+    {"id": "version_managers", "label": "pyenv / nvm / rbenv / asdf", "json_key": "version_managers"},
+    {"id": "auth_configs", "label": "SSH / GPG / cloud auth (metadata)", "json_key": "auth_configs"},
+    {"id": "editors_ides", "label": "Editors / IDEs", "json_key": "editors_ides"},
+    {"id": "hammerspoon_btt", "label": "Hammerspoon / BetterTouchTool", "json_key": "hammerspoon_btt"},
+    {"id": "default_apps", "label": "Default handlers", "json_key": "default_apps"},
+    {"id": "input_sources", "label": "Input sources / keyboard layouts", "json_key": "input_sources"},
+    {"id": "bluetooth", "label": "Bluetooth devices", "json_key": "bluetooth"},
+    {"id": "wifi_networks", "label": "Saved Wi-Fi networks", "json_key": "wifi_networks"},
+]
