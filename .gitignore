@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Environment / secrets
+.env
+.env.*
+
+# Local migration output (user data)
+migration-inventory/
+~/migration-inventory/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
