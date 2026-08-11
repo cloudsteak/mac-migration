@@ -171,6 +171,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .inventory-links a:hover { text-decoration: underline; }
   .empty { color: var(--muted); font-size: .88rem; padding: .5rem 0; }
   .hidden { display: none !important; }
+  .group-card {
+    border: 1px solid #e4e4e8;
+    border-radius: 10px;
+    margin-bottom: .75rem;
+    overflow: hidden;
+    background: #fff;
+  }
+  .group-head {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    padding: .75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+    background: #fafafa;
+  }
+  .group-head:hover { background: #f3f3f6; }
+  .group-head h3 { margin: 0; font-size: 1rem; flex: 1; }
+  .group-meta { font-size: .78rem; color: var(--muted); }
+  .group-body { padding: 0 1rem .85rem 1rem; display: none; }
+  .group-card.open .group-body { display: block; }
+  .group-parent {
+    font-size: .86rem;
+    margin: .65rem 0 .45rem;
+    color: var(--text);
+  }
+  .group-children { margin: 0; padding-left: 1.1rem; font-size: .84rem; }
+  .group-children li { margin-bottom: .35rem; }
+  .group-step { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; color: var(--muted); }
   footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1rem; }
 </style>
 </head>
@@ -192,6 +221,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="bars">
     <h2 id="bars-title">Storage by category</h2>
     <div id="size-bars"></div>
+  </div>
+  <div class="panel" id="groups-panel">
+    <h2>Install groups <span id="groups-count" style="font-weight:400;color:var(--muted);font-size:.85rem"></span></h2>
+    <p class="empty" id="groups-intro" style="margin-top:0">Grouped view — Homebrew packages, DAW plugins, editor extensions.</p>
+    <div id="install-groups"></div>
+    <p class="empty hidden" id="groups-empty">No install groups match the current filter.</p>
   </div>
   <div class="panel" id="components-panel">
     <h2>Components <span id="components-count" style="font-weight:400;color:var(--muted);font-size:.85rem"></span></h2>
@@ -292,6 +327,70 @@ function isInteractiveMode() {
 function isNoisePath(path) {
   if (!path) return true;
   return path.includes(".app/Contents/") || path.includes("/node_modules/");
+}
+
+function installGroups() {
+  const key = lang === "hu" ? "install_groups_hu" : "install_groups_en";
+  return DATA.analysis[key] || DATA.analysis.install_groups_en || DATA.plan.install_groups || [];
+}
+
+function filteredInstallGroups() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  return installGroups().filter(g => {
+    if (!q) return true;
+    const parent = g.parent ? [g.parent.name, g.parent.decision, g.parent.install_step].join(" ") : "";
+    const children = (g.children || []).map(c => [c.name, c.decision, c.install_step, c.path].join(" ")).join(" ");
+    const hay = [g.group_name, g.group_type, parent, children, (g.group_steps || []).join(" ")].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function renderInstallGroups() {
+  const panel = document.getElementById("groups-panel");
+  if (!isInteractiveMode()) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "";
+  const groups = filteredInstallGroups();
+  document.getElementById("groups-count").textContent = `(${installGroups().length} groups)`;
+  const root = document.getElementById("install-groups");
+  const empty = document.getElementById("groups-empty");
+  if (!groups.length) {
+    root.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  root.innerHTML = groups.map((g, idx) => {
+    const summary = Object.entries(g.decision_summary || {})
+      .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(" · ");
+    const steps = (g.group_steps || []).map(s => `<div class="group-step">${s}</div>`).join("");
+    const parent = g.parent
+      ? `<div class="group-parent"><strong>Main:</strong> ${g.parent.name} <span class="badge ${g.parent.decision}">${DECISION_LABELS[g.parent.decision] || g.parent.decision}</span></div>`
+      : "";
+    const children = (g.children || []).map(c => {
+      const step = c.install_step || c.path || "";
+      const stepHtml = step ? `<span class="group-step"> — ${step}</span>` : "";
+      return `<li><strong>${c.name}</strong> <span class="badge ${c.decision}">${DECISION_LABELS[c.decision] || c.decision}</span>${stepHtml}</li>`;
+    }).join("");
+    return `<div class="group-card ${idx === 0 ? "open" : ""}" data-group-idx="${idx}">
+      <div class="group-head" data-group-toggle="${idx}">
+        <h3>${g.group_name || "?"}</h3>
+        <span class="group-meta">${summary || g.group_type || ""}</span>
+      </div>
+      <div class="group-body">
+        ${steps}
+        ${parent}
+        <ul class="group-children">${children}</ul>
+      </div>
+    </div>`;
+  }).join("");
+  root.querySelectorAll("[data-group-toggle]").forEach(el => {
+    el.addEventListener("click", () => {
+      el.closest(".group-card")?.classList.toggle("open");
+    });
+  });
 }
 
 function components() {
@@ -608,11 +707,13 @@ function renderInventoryLinks() {
 
 function bindEvents() {
   document.getElementById("search").addEventListener("input", () => {
+    renderInstallGroups();
     renderFolderRows();
     renderComponentRows();
   });
   document.getElementById("lang").addEventListener("change", e => {
     lang = e.target.value;
+    renderInstallGroups();
     renderFolderRows();
     renderComponentRows();
     renderChecklist();
@@ -675,6 +776,7 @@ if (isInteractiveMode()) {
 renderMeta();
 renderCards();
 renderBars();
+renderInstallGroups();
 renderComponentTabs();
 renderComponentRows();
 renderFolderTabs();
@@ -744,6 +846,25 @@ def slim_component(comp: dict) -> dict:
     }
 
 
+def slim_install_group(group: dict) -> dict:
+    def slim_child(c: dict) -> dict:
+        return {
+            k: c[k]
+            for k in ("component_id", "name", "type", "decision", "install_step", "path", "source")
+            if k in c
+        }
+
+    out = {
+        k: group[k]
+        for k in ("group_id", "group_name", "group_type", "decision_summary", "group_steps")
+        if k in group
+    }
+    if group.get("parent"):
+        out["parent"] = slim_child(group["parent"])
+    out["children"] = [slim_child(c) for c in (group.get("children") or [])]
+    return out
+
+
 def slim_payload_for_dashboard(payload: dict) -> dict:
     """Keep dashboard HTML small — interactive mode uses components, not 2000+ folder rows."""
     analysis = dict(payload.get("analysis") or {})
@@ -769,17 +890,27 @@ def slim_payload_for_dashboard(payload: dict) -> dict:
         slim_analysis["components_hu"] = [
             slim_component(c) for c in (analysis.get("components_hu") or [])
         ]
+        slim_analysis["install_groups_en"] = [
+            slim_install_group(g) for g in (analysis.get("install_groups_en") or [])
+        ]
+        slim_analysis["install_groups_hu"] = [
+            slim_install_group(g) for g in (analysis.get("install_groups_hu") or [])
+        ]
+        slim_plan = {
+            "mode": plan.get("mode"),
+            "counts": plan.get("counts") or {},
+            "sections": {
+                key: [slim_component(c) for c in (items or [])]
+                for key, items in (plan.get("sections") or {}).items()
+            },
+            "install_groups": [
+                slim_install_group(g) for g in (plan.get("install_groups") or [])
+            ],
+        }
         return {
             **payload,
             "analysis": slim_analysis,
-            "plan": {
-                "mode": plan.get("mode"),
-                "counts": plan.get("counts") or {},
-                "sections": {
-                    key: [slim_component(c) for c in (items or [])]
-                    for key, items in (plan.get("sections") or {}).items()
-                },
-            },
+            "plan": slim_plan,
         }
     return payload
 

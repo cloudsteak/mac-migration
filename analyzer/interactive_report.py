@@ -409,8 +409,13 @@ def write_interactive_markdown(
     lang: str,
     other_path: Path,
 ) -> None:
+    from install_groups import build_install_groups, format_install_groups_markdown
+
     entries = decisions_to_report_entries(store)
     counts = Counter(e["decision"] for e in entries)
+    enriched_for_groups = [enrich_entry_for_report(e, inventory_dir, lang) for e in entries]
+    install_groups = build_install_groups(enriched_for_groups, inventory_dir, lang)
+
     lines = [
         _label(lang, "lang_link").format(other=other_path.name),
         "",
@@ -424,7 +429,7 @@ def write_interactive_markdown(
     for decision in DECISION_ORDER:
         if counts.get(decision):
             lines.append(f"- **{decision}**: {counts[decision]}")
-    lines.append("")
+    lines.extend(format_install_groups_markdown(install_groups, lang))
 
     current_section = ""
     for entry in entries:
@@ -491,6 +496,7 @@ def write_interactive_json(
     out_path: Path,
     meta: dict,
 ) -> None:
+    from install_groups import build_install_groups
     from interactive import decision_to_folder_results
 
     entries = decisions_to_report_entries(store)
@@ -505,6 +511,8 @@ def write_interactive_json(
         "results": folder_results,
         "components_en": enriched_en,
         "components_hu": enriched_hu,
+        "install_groups_en": build_install_groups(enriched_en, inventory_dir, "en"),
+        "install_groups_hu": build_install_groups(enriched_hu, inventory_dir, "hu"),
     }
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     hu_payload = {**payload, "lang": "hu"}

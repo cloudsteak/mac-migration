@@ -150,6 +150,13 @@ def build_interactive_component_plan(
         "",
     ]
 
+    groups_key = "install_groups_hu" if lang == "hu" else "install_groups_en"
+    install_groups = analysis.get(groups_key) or analysis.get("install_groups_en") or []
+    if install_groups:
+        from install_groups import format_install_groups_markdown
+
+        lines.extend(format_install_groups_markdown(install_groups, lang))
+
     paths_label = "Related paths" if lang == "en" else "Kapcsolódó útvonalak"
     steps_label = "Steps" if lang == "en" else "Lépések"
 
@@ -198,6 +205,7 @@ def build_interactive_component_plan(
         "lang": lang,
         "counts": counts,
         "sections": sections,
+        "install_groups": install_groups,
         "component_count": len(components),
     }
     return lines, plan_json
