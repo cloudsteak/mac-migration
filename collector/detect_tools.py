@@ -46,6 +46,8 @@ TOOL_CATALOG: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str,
     ("helm", "devops", (), (), ("helm",)),
     ("docker", "devops", (), (), ("docker",)),
     ("podman", "devops", (), (), ("podman",)),
+    ("AWS CLI", "devops", (), (), ("aws",), (".aws",)),
+    ("Google Cloud CLI", "devops", (), (), ("gcloud",), (".config/gcloud",)),
     # Runtimes
     ("Go", "runtime", (), (), ("go",)),
     ("Node.js", "runtime", (), (), ("node",)),
@@ -206,6 +208,7 @@ def detect_tool(
     app_patterns: tuple[str, ...],
     support_patterns: tuple[str, ...],
     cli_bins: tuple[str, ...],
+    home_config_dirs: tuple[str, ...] = (),
 ) -> dict | None:
     apps = find_apps_matching(app_patterns) if app_patterns else []
     support = find_app_support(support_patterns) if support_patterns else []
@@ -216,8 +219,19 @@ def detect_tool(
 
     paths = apps + support
     sizes = {p: dir_size_human(Path(p)) for p in support[:5]}
+    config_paths: list[str] = []
 
-    return {
+    for rel in home_config_dirs:
+        path = HOME / rel
+        if not path.exists():
+            continue
+        path_str = str(path)
+        paths.append(path_str)
+        config_paths.append(path_str)
+        if path.is_dir():
+            sizes[path_str] = dir_size_human(path)
+
+    item = {
         "id": f"tool:{category}:{re.sub(r'[^a-zA-Z0-9]+', '_', name.lower()).strip('_')}",
         "name": name,
         "category": category,
@@ -226,8 +240,10 @@ def detect_tool(
         "support_sizes": sizes,
         "cli": cli,
         "paths": paths,
+        "config_paths": config_paths,
         "detected": True,
     }
+    return item
 
 
 def scan_extra_ai_folders() -> list[dict]:
@@ -262,7 +278,8 @@ def scan_extra_ai_folders() -> list[dict]:
 def build_inventory(out_dir: Path) -> dict:
     tools: list[dict] = []
     for entry in TOOL_CATALOG:
-        item = detect_tool(*entry)
+        home_dirs = entry[5] if len(entry) > 5 else ()
+        item = detect_tool(*entry[:5], home_config_dirs=home_dirs)
         if item:
             tools.append(item)
 

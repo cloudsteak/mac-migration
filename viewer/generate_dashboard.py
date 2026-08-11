@@ -143,6 +143,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .badge.app_data { background: var(--app); }
   .badge.cache_or_temp { background: var(--skip); }
   .badge.uncertain { background: var(--review); }
+  .badge.migrate { background: var(--copy); }
+  .badge.reinstall { background: var(--app); }
+  .badge.skip { background: var(--skip); }
+  .badge.later { background: var(--review); }
+  .steps-list { margin: .35rem 0 0 1rem; padding: 0; font-size: .82rem; color: var(--muted); }
+  .steps-list li { margin-bottom: .25rem; }
+  .paths-list { margin: .25rem 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .76rem; color: var(--muted); }
+  .panel.collapsed .table-wrap, .panel.collapsed .tabs { display: none; }
+  .panel-toggle { float: right; font-size: .78rem; color: var(--accent); cursor: pointer; border: none; background: none; }
   .checklist label {
     display: flex;
     gap: .65rem;
@@ -181,11 +190,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <main>
   <div class="cards" id="cards"></div>
   <div class="bars">
-    <h2>Storage by category</h2>
+    <h2 id="bars-title">Storage by category</h2>
     <div id="size-bars"></div>
   </div>
-  <div class="panel">
-    <h2>Folders</h2>
+  <div class="panel" id="components-panel">
+    <h2>Components <span id="components-count" style="font-weight:400;color:var(--muted);font-size:.85rem"></span></h2>
+    <div class="tabs" id="component-tabs"></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort-comp="decision">Decision</th>
+            <th data-sort-comp="component_name">Component</th>
+            <th data-sort-comp="type">Type</th>
+            <th>Related paths</th>
+            <th>Install / migration steps</th>
+          </tr>
+        </thead>
+        <tbody id="component-rows"></tbody>
+      </table>
+    </div>
+    <p class="empty hidden" id="component-empty">No components match the current filter.</p>
+  </div>
+  <div class="panel collapsed" id="folders-panel">
+    <h2>Folders <button type="button" class="panel-toggle" id="folders-toggle">Show details</button></h2>
     <div class="tabs" id="folder-tabs"></div>
     <div class="table-wrap">
       <table>
@@ -232,11 +260,48 @@ const PLAN_SECTIONS = [
   { key: "app_data", label: "App data", category: "app_data" },
 ];
 
+const INTERACTIVE_SECTIONS = [
+  { key: "migrate", label: "Migrate" },
+  { key: "reinstall", label: "Reinstall" },
+  { key: "skip", label: "Skip" },
+  { key: "later", label: "Later" },
+];
+
+const DECISION_LABELS = {
+  migrate: "Migrate",
+  reinstall: "Reinstall",
+  skip: "Skip",
+  later: "Later",
+};
+
 let folderFilter = "all";
-let planFilter = "copy";
+let componentFilter = "all";
+let planFilter = "migrate";
 let sortKey = "size_bytes";
+let sortCompKey = "component_name";
 let sortAsc = false;
+let sortCompAsc = true;
 let lang = "en";
+
+function isInteractiveMode() {
+  return DATA.analysis.mode === "interactive_report"
+    || DATA.plan.mode === "interactive_components"
+    || !!(DATA.analysis.components_en && DATA.analysis.components_en.length);
+}
+
+function isNoisePath(path) {
+  if (!path) return true;
+  return path.includes(".app/Contents/") || path.includes("/node_modules/");
+}
+
+function components() {
+  const key = lang === "hu" ? "components_hu" : "components_en";
+  return DATA.analysis[key] || DATA.analysis.components_en || [];
+}
+
+function planSections() {
+  return isInteractiveMode() ? INTERACTIVE_SECTIONS : PLAN_SECTIONS;
+}
 
 function fmtBytes(n) {
   if (!n) return "0 B";
@@ -252,7 +317,21 @@ function reason(item) {
 }
 
 function results() {
-  return DATA.analysis.results || [];
+  const all = DATA.analysis.results || [];
+  if (isInteractiveMode()) {
+    return all.filter(r => !isNoisePath(r.path));
+  }
+  return all;
+}
+
+function componentSteps(comp) {
+  const key = lang === "hu" ? "install_steps" : "install_steps";
+  return comp[key] || comp.install_steps || [];
+}
+
+function componentSummary(comp) {
+  if (lang === "hu") return comp.summary || "";
+  return comp.summary || "";
 }
 
 function loadChecks() {
@@ -278,13 +357,24 @@ function renderMeta() {
 }
 
 function renderCards() {
-  const counts = DATA.plan.counts || {};
-  const cards = [
-    { cls: "copy", label: "Copy", value: counts.copy ?? 0 },
-    { cls: "app", label: "App data", value: counts.app ?? 0 },
-    { cls: "skip", label: "Skip", value: counts.skip ?? 0 },
-    { cls: "review", label: "Review", value: counts.review ?? 0 },
-  ];
+  let cards;
+  if (isInteractiveMode()) {
+    const counts = DATA.plan.counts || DATA.analysis.summary || {};
+    cards = [
+      { cls: "copy", label: "Migrate", value: counts.migrate ?? counts.copy ?? 0 },
+      { cls: "app", label: "Reinstall", value: counts.reinstall ?? counts.app ?? 0 },
+      { cls: "skip", label: "Skip", value: counts.skip ?? 0 },
+      { cls: "review", label: "Later", value: counts.later ?? counts.review ?? 0 },
+    ];
+  } else {
+    const counts = DATA.plan.counts || {};
+    cards = [
+      { cls: "copy", label: "Copy", value: counts.copy ?? 0 },
+      { cls: "app", label: "App data", value: counts.app ?? 0 },
+      { cls: "skip", label: "Skip", value: counts.skip ?? 0 },
+      { cls: "review", label: "Review", value: counts.review ?? 0 },
+    ];
+  }
   document.getElementById("cards").innerHTML = cards.map(c => `
     <div class="card ${c.cls}">
       <div class="label">${c.label}</div>
@@ -294,12 +384,40 @@ function renderCards() {
 }
 
 function renderBars() {
+  if (isInteractiveMode()) {
+    const summary = DATA.analysis.summary || DATA.plan.counts || {};
+    const rows = [
+      { cls: "copy", label: "Migrate", bytes: summary.migrate ?? summary.copy ?? 0, count: true },
+      { cls: "app", label: "Reinstall", bytes: summary.reinstall ?? summary.app ?? 0, count: true },
+      { cls: "skip", label: "Skip", bytes: summary.skip ?? 0, count: true },
+      { cls: "review", label: "Later", bytes: summary.later ?? summary.review ?? 0, count: true },
+    ];
+    const max = Math.max(...rows.map(r => r.bytes), 1);
+    const barsTitle = document.getElementById("bars-title");
+    if (barsTitle) barsTitle.textContent = "Components by decision";
+    document.getElementById("size-bars").innerHTML = rows.map(r => {
+      const pct = Math.max(2, (r.bytes / max) * 100);
+      const val = r.count ? `${r.bytes} items` : fmtBytes(r.bytes);
+      return `<div class="bar-row">
+        <div class="bar-label">${r.label}</div>
+        <div class="bar-track"><div class="bar-fill ${r.cls}" style="width:${pct}%"></div></div>
+        <div class="bar-size">${val}</div>
+      </div>`;
+    }).join("");
+    return;
+  }
   const totals = { user_custom: 0, app_data: 0, cache_or_temp: 0, uncertain: 0 };
   for (const r of results()) {
     const cat = r.category || "uncertain";
     totals[cat] = (totals[cat] || 0) + (r.size_bytes || 0);
   }
   const max = Math.max(...Object.values(totals), 1);
+  const barsTitle = document.getElementById("bars-title");
+  if (barsTitle) {
+    barsTitle.textContent = isInteractiveMode()
+      ? "Storage by folder category (filtered — no .app/Contents noise)"
+      : "Storage by category";
+  }
   document.getElementById("size-bars").innerHTML = Object.entries(totals).map(([cat, bytes]) => {
     const cls = cat === "cache_or_temp" ? "skip" : cat === "user_custom" ? "copy" : cat === "app_data" ? "app" : "review";
     const pct = Math.max(2, (bytes / max) * 100);
@@ -308,6 +426,71 @@ function renderBars() {
       <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
       <div class="bar-size">${fmtBytes(bytes)}</div>
     </div>`;
+  }).join("");
+}
+
+function filteredComponents() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  return components().filter(c => {
+    if (componentFilter !== "all" && c.decision !== componentFilter) return false;
+    if (!q) return true;
+    const paths = (c.related_paths || []).map(p => p.path).join(" ");
+    const steps = componentSteps(c).join(" ");
+    const hay = [c.component_name, c.type, c.decision, paths, steps, componentSummary(c)].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function renderComponentTabs() {
+  const panel = document.getElementById("components-panel");
+  if (!isInteractiveMode()) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "";
+  const tabs = [{ id: "all", label: "All" }, ...INTERACTIVE_SECTIONS.map(s => ({ id: s.key, label: s.label }))];
+  document.getElementById("component-tabs").innerHTML = tabs.map(t => `
+    <button type="button" data-component-tab="${t.id}" class="${componentFilter === t.id ? "active" : ""}">${t.label}</button>
+  `).join("");
+  document.getElementById("components-count").textContent = `(${components().length} items)`;
+}
+
+function renderComponentRows() {
+  if (!isInteractiveMode()) return;
+  let rows = filteredComponents().slice();
+  rows.sort((a, b) => {
+    let av = a[sortCompKey];
+    let bv = b[sortCompKey];
+    if (typeof av === "string") av = av.toLowerCase();
+    if (typeof bv === "string") bv = bv.toLowerCase();
+    if (av === bv) return 0;
+    return (av < bv ? -1 : 1) * (sortCompAsc ? 1 : -1);
+  });
+
+  const tbody = document.getElementById("component-rows");
+  const empty = document.getElementById("component-empty");
+  if (!rows.length) {
+    tbody.innerHTML = "";
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  tbody.innerHTML = rows.map(c => {
+    const paths = (c.related_paths || []).slice(0, 6).map(p =>
+      `<div class="paths-list">${p.path || ""} <span>(${p.size_human || "?"})</span></div>`
+    ).join("");
+    const morePaths = (c.related_paths || []).length > 6
+      ? `<div class="paths-list">… +${c.related_paths.length - 6} more</div>` : "";
+    const steps = componentSteps(c).slice(0, 5).map(s => `<li>${s}</li>`).join("");
+    const moreSteps = componentSteps(c).length > 5
+      ? `<li>… +${componentSteps(c).length - 5} more</li>` : "";
+    return `<tr>
+      <td><span class="badge ${c.decision}">${DECISION_LABELS[c.decision] || c.decision}</span></td>
+      <td><strong>${c.component_name || ""}</strong></td>
+      <td>${c.type || ""}</td>
+      <td>${paths}${morePaths}</td>
+      <td><ol class="steps-list">${steps}${moreSteps}</ol></td>
+    </tr>`;
   }).join("");
 }
 
@@ -360,18 +543,23 @@ function renderFolderRows() {
 }
 
 function checklistId(section, item) {
-  return `${section}:${item.path || item.name || item}`;
+  if (item.component_id) return `${section}:${item.component_id}`;
+  return `${section}:${item.path || item.component_name || item.name || item}`;
 }
 
 function renderPlanTabs() {
-  document.getElementById("plan-tabs").innerHTML = PLAN_SECTIONS.map(s => `
+  document.getElementById("plan-tabs").innerHTML = planSections().map(s => `
     <button type="button" data-plan-tab="${s.key}" class="${planFilter === s.key ? "active" : ""}">${s.label}</button>
   `).join("");
 }
 
 function renderChecklist() {
   const checks = loadChecks();
-  const section = PLAN_SECTIONS.find(s => s.key === planFilter);
+  const section = planSections().find(s => s.key === planFilter);
+  if (!section) {
+    document.getElementById("checklist").innerHTML = '<p class="empty">No items in this section.</p>';
+    return;
+  }
   const items = (DATA.plan.sections && DATA.plan.sections[section.key]) || [];
   const container = document.getElementById("checklist");
 
@@ -383,9 +571,18 @@ function renderChecklist() {
   container.innerHTML = items.map(item => {
     const id = checklistId(section.key, item);
     const checked = !!checks[id];
-    const label = item.path
-      ? `${item.path} (${item.size_human || fmtBytes(item.size_bytes || 0)}) — ${reason(item)}`
-      : String(item);
+    let label;
+    if (item.component_name) {
+      const steps = (item.install_steps || []).slice(0, 2).join(" · ");
+      const paths = (item.related_paths || []).slice(0, 2).map(p => p.path).join(", ");
+      label = `<strong>${item.component_name}</strong> (${item.type || "?"})`;
+      if (paths) label += `<br><span class="paths-list">${paths}</span>`;
+      if (steps) label += `<br><span class="paths-list">${steps}</span>`;
+    } else if (item.path) {
+      label = `${item.path} (${item.size_human || fmtBytes(item.size_bytes || 0)}) — ${reason(item)}`;
+    } else {
+      label = String(item);
+    }
     return `<label class="${checked ? "done" : ""}">
       <input type="checkbox" data-check-id="${id}" ${checked ? "checked" : ""}>
       <span>${label}</span>
@@ -410,10 +607,14 @@ function renderInventoryLinks() {
 }
 
 function bindEvents() {
-  document.getElementById("search").addEventListener("input", renderFolderRows);
+  document.getElementById("search").addEventListener("input", () => {
+    renderFolderRows();
+    renderComponentRows();
+  });
   document.getElementById("lang").addEventListener("change", e => {
     lang = e.target.value;
     renderFolderRows();
+    renderComponentRows();
     renderChecklist();
   });
   document.getElementById("reset-checks").addEventListener("click", () => {
@@ -421,6 +622,19 @@ function bindEvents() {
       localStorage.removeItem(STORAGE_KEY);
       renderChecklist();
     }
+  });
+  document.getElementById("folders-toggle").addEventListener("click", () => {
+    const panel = document.getElementById("folders-panel");
+    const btn = document.getElementById("folders-toggle");
+    panel.classList.toggle("collapsed");
+    btn.textContent = panel.classList.contains("collapsed") ? "Show details" : "Hide details";
+  });
+  document.getElementById("component-tabs").addEventListener("click", e => {
+    const btn = e.target.closest("[data-component-tab]");
+    if (!btn) return;
+    componentFilter = btn.dataset.componentTab;
+    renderComponentTabs();
+    renderComponentRows();
   });
   document.getElementById("folder-tabs").addEventListener("click", e => {
     const btn = e.target.closest("[data-folder-tab]");
@@ -444,11 +658,25 @@ function bindEvents() {
       renderFolderRows();
     });
   });
+  document.querySelectorAll("th[data-sort-comp]").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.sortComp;
+      if (sortCompKey === key) sortCompAsc = !sortCompAsc;
+      else { sortCompKey = key; sortCompAsc = key === "component_name"; }
+      renderComponentRows();
+    });
+  });
+}
+
+if (isInteractiveMode()) {
+  planFilter = "migrate";
 }
 
 renderMeta();
 renderCards();
 renderBars();
+renderComponentTabs();
+renderComponentRows();
 renderFolderTabs();
 renderFolderRows();
 renderPlanTabs();
@@ -496,8 +724,68 @@ def load_payload(inventory_dir: Path) -> dict:
     }
 
 
+def slim_component(comp: dict) -> dict:
+    name = comp.get("component_name") or ""
+    if comp.get("type") in ("homebrew_formula", "homebrew_cask"):
+        brew_names = {
+            "awscli": "AWS CLI",
+            "gcloud-cli": "Google Cloud CLI",
+            "azure-cli": "Azure CLI",
+        }
+        name = brew_names.get(name, name)
+    return {
+        "component_id": comp.get("component_id"),
+        "component_name": name,
+        "type": comp.get("type"),
+        "decision": comp.get("decision"),
+        "related_paths": comp.get("related_paths") or [],
+        "install_steps": comp.get("install_steps") or [],
+        "summary": comp.get("summary") or "",
+    }
+
+
+def slim_payload_for_dashboard(payload: dict) -> dict:
+    """Keep dashboard HTML small — interactive mode uses components, not 2000+ folder rows."""
+    analysis = dict(payload.get("analysis") or {})
+    plan = dict(payload.get("plan") or {})
+    if analysis.get("mode") == "interactive_report" or plan.get("mode") == "interactive_components":
+        slim_analysis = {
+            k: analysis[k]
+            for k in (
+                "mode",
+                "model",
+                "project",
+                "summary",
+                "component_count",
+                "result_count",
+                "generated_by",
+                "decisions_file",
+            )
+            if k in analysis
+        }
+        slim_analysis["components_en"] = [
+            slim_component(c) for c in (analysis.get("components_en") or [])
+        ]
+        slim_analysis["components_hu"] = [
+            slim_component(c) for c in (analysis.get("components_hu") or [])
+        ]
+        return {
+            **payload,
+            "analysis": slim_analysis,
+            "plan": {
+                "mode": plan.get("mode"),
+                "counts": plan.get("counts") or {},
+                "sections": {
+                    key: [slim_component(c) for c in (items or [])]
+                    for key, items in (plan.get("sections") or {}).items()
+                },
+            },
+        }
+    return payload
+
+
 def generate_dashboard(inventory_dir: Path, output: Path) -> Path:
-    payload = load_payload(inventory_dir)
+    payload = slim_payload_for_dashboard(load_payload(inventory_dir))
     html = HTML_TEMPLATE.replace("__DATA__", json.dumps(payload, ensure_ascii=False))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")

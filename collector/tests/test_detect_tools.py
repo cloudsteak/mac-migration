@@ -25,6 +25,29 @@ def test_detect_tool_from_cli_only(monkeypatch, tmp_path: Path):
     assert "terraform" in item["cli"]
 
 
+def test_detect_tool_includes_home_config(monkeypatch, tmp_path: Path):
+    import detect_tools as dt
+
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir()
+    (aws_dir / "config").write_text("[default]", encoding="utf-8")
+
+    monkeypatch.setattr(dt, "HOME", tmp_path)
+    monkeypatch.setattr(dt, "find_apps_matching", lambda p: [])
+    monkeypatch.setattr(dt, "find_app_support", lambda p: [])
+    monkeypatch.setattr(
+        dt,
+        "find_cli",
+        lambda bins: {"aws": "/opt/homebrew/bin/aws (aws-cli/2.36.0)"} if "aws" in bins else {},
+    )
+    monkeypatch.setattr(dt, "dir_size_human", lambda p: "4K")
+
+    item = detect_tool("AWS CLI", "devops", (), (), ("aws",), (".aws",))
+    assert item is not None
+    assert str(aws_dir) in item["paths"]
+    assert item["config_paths"] == [str(aws_dir)]
+
+
 def test_build_inventory_structure(tmp_path: Path, monkeypatch):
     import detect_tools as dt
 

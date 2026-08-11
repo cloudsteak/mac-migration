@@ -362,7 +362,7 @@ def build_order_section(lang: str) -> list[str]:
             "5. **Aliasok + shell + Homebrew + VS Code** — egy lépés: `bash ~/migration-inventory/restore.sh`",
             "6. **pipx / npm global** — csomagok újratelepítése",
             "7. **AI eszközök** — Cursor, Claude, Copilot bővítmények (lásd alább)",
-            "8. **DevOps** — Terraform/tenv, Go, Docker",
+            "8. **DevOps** — Terraform/tenv, Go, Docker, **AWS CLI**, gcloud",
             "9. **Kreatív appok** — Ableton, Rekordbox adatmappák",
             "10. **Dotfile-ok** — csak amit az interaktív elemzés `migrate` döntéssel jelölt",
             "11. **Appok** — App Store / brew cask / kézi telepítés",
@@ -385,7 +385,7 @@ def build_order_section(lang: str) -> list[str]:
         "5. **Aliases + shell + Homebrew + VS Code** — one step: `bash ~/migration-inventory/restore.sh`",
         "6. **pipx / npm global** — reinstall packages",
         "7. **AI tools** — Cursor, Claude, Copilot extensions (see below)",
-        "8. **DevOps** — Terraform/tenv, Go, Docker",
+        "8. **DevOps** — Terraform/tenv, Go, Docker, **AWS CLI**, gcloud",
         "9. **Creative apps** — Ableton, Rekordbox data folders",
         "10. **Dotfiles** — only paths marked `migrate` in interactive review",
         "11. **Apps** — App Store / brew cask / manual install",
@@ -865,6 +865,112 @@ def build_audio_section(audio_data: dict | None, lang: str) -> list[str]:
     return lines
 
 
+def build_cloud_cli_section(homebrew_data: dict | None, lang: str) -> list[str]:
+    formulae = {
+        pkg.get("name", "")
+        for pkg in (homebrew_data or {}).get("formulae") or []
+        if pkg.get("name")
+    }
+    casks = {
+        pkg.get("name", "")
+        for pkg in (homebrew_data or {}).get("casks") or []
+        if pkg.get("name")
+    }
+    has_aws = "awscli" in formulae or "aws-vault-binary" in casks
+    has_gcloud = "gcloud-cli" in casks or "google-cloud-sdk" in formulae
+    if not has_aws and not has_gcloud:
+        return []
+
+    if lang == "hu":
+        lines = [
+            "## AWS CLI és Google Cloud CLI",
+            "",
+            "A régi gépen ezek telepítve voltak. **Ne másold** a Cellar/bin mappákat — csak a configot.",
+            "",
+        ]
+        if has_aws:
+            lines.extend(
+                [
+                    "### AWS CLI",
+                    "",
+                    "```bash",
+                    "brew install awscli",
+                    "aws --version",
+                    "aws configure list",
+                    "```",
+                    "",
+                    "Config migrálása (ha `migrate` döntés):",
+                    "",
+                    "```bash",
+                    "rsync -a ~/.aws/ NEW_MAC:~/.aws/",
+                    "```",
+                    "",
+                    "Fájlok: `~/.aws/config`, `~/.aws/credentials` (profilok, SSO, access key).",
+                    "",
+                ]
+            )
+        if has_gcloud:
+            lines.extend(
+                [
+                    "### Google Cloud CLI",
+                    "",
+                    "```bash",
+                    "brew install --cask gcloud-cli",
+                    "gcloud --version",
+                    "gcloud auth list",
+                    "```",
+                    "",
+                    "Config: `~/.config/gcloud/` — másold csak ha szükséges; SSO-t újra be kell jelentkezni.",
+                    "",
+                ]
+            )
+        return lines
+
+    lines = [
+        "## AWS CLI & Google Cloud CLI",
+        "",
+        "These were installed on the old Mac. **Do not copy** Cellar binaries — migrate config only.",
+        "",
+    ]
+    if has_aws:
+        lines.extend(
+            [
+                "### AWS CLI",
+                "",
+                "```bash",
+                "brew install awscli",
+                "aws --version",
+                "aws configure list",
+                "```",
+                "",
+                "Migrate config (if you chose `migrate`):",
+                "",
+                "```bash",
+                "rsync -a ~/.aws/ NEW_MAC:~/.aws/",
+                "```",
+                "",
+                "Files: `~/.aws/config`, `~/.aws/credentials` (profiles, SSO, access keys).",
+                "",
+            ]
+        )
+    if has_gcloud:
+        lines.extend(
+            [
+                "### Google Cloud CLI",
+                "",
+                "```bash",
+                "brew install --cask gcloud-cli",
+                "gcloud --version",
+                "gcloud auth list",
+                "```",
+                "",
+                "Config: `~/.config/gcloud/` — copy only if needed; re-login for SSO.",
+                "",
+            ]
+        )
+    return lines
+
+
 def build_reinstall_guide(
     snapshot: dict,
     lang: str,
@@ -886,6 +992,7 @@ def build_reinstall_guide(
     parts.extend(build_pipx_section(snapshot, lang))
     parts.extend(build_aliases_section(snapshot, lang, manifest))
     parts.extend(build_tools_sections(tools_data, lang))
+    parts.extend(build_cloud_cli_section(homebrew_data, lang))
     parts.extend(build_vscode_sections(vscode_data, lang))
     parts.extend(build_quick_actions_section(quick_actions_data, lang))
     parts.extend(build_audio_section(audio_data, lang))

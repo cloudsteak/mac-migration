@@ -79,13 +79,128 @@ def interactive_reason(entry: dict, lang: str) -> str:
         return (
             analysis.get("migration_guidance_hu")
             or analysis.get("what_it_is_hu")
-            or entry.get("decision", "")
+            or entry.get("note_hu")
+            or ""
         )
     return (
         analysis.get("migration_guidance_en")
         or analysis.get("what_it_is_en")
-        or entry.get("decision", "")
+        or entry.get("note_en")
+        or ""
     )
+
+
+def build_interactive_component_plan(
+    analysis: dict,
+    lang: str,
+    other_md_name: str,
+    manifest: dict | None = None,
+) -> tuple[list[str], dict]:
+    """Plan from interactive component review — paths + install steps per item."""
+    comp_key = "components_hu" if lang == "hu" else "components_en"
+    components = analysis.get(comp_key) or analysis.get("components_en") or []
+
+    decision_order = ("migrate", "reinstall", "later", "skip")
+    decision_titles = {
+        "en": {
+            "migrate": "## Migrate — copy data / config",
+            "reinstall": "## Reinstall — fresh install on new Mac",
+            "later": "## Decide later",
+            "skip": "## Skip — leave on old Mac",
+        },
+        "hu": {
+            "migrate": "## Migrálás — adat/config másolása",
+            "reinstall": "## Újratelepítés — friss telepítés az új Mac-en",
+            "later": "## Később eldöntendő",
+            "skip": "## Kihagyás — marad a régi gépen",
+        },
+    }
+    titles = decision_titles.get(lang, decision_titles["en"])
+    link_key = "lang_link_en" if lang == "en" else "lang_link_hu"
+
+    sections: dict[str, list[dict]] = {d: [] for d in decision_order}
+    for comp in components:
+        decision = comp.get("decision", "later")
+        if decision in sections:
+            sections[decision].append(comp)
+
+    counts = {
+        "migrate": len(sections["migrate"]),
+        "reinstall": len(sections["reinstall"]),
+        "skip": len(sections["skip"]),
+        "later": len(sections["later"]),
+        "copy": len(sections["migrate"]),
+        "app": len(sections["reinstall"]),
+        "review": len(sections["later"]),
+    }
+
+    lines = [
+        pt(lang, link_key, other=other_md_name),
+        "",
+        pt(lang, "title"),
+        "",
+        (
+            "Checklist from your interactive review — each item includes related paths and install steps."
+            if lang == "en"
+            else "Interaktív felülvizsgálat alapján — minden tételnél kapcsolódó útvonalak és telepítési lépések."
+        ),
+        "",
+        f"**{'Summary' if lang == 'en' else 'Összefoglaló'}:** migrate {counts['migrate']} · "
+        f"reinstall {counts['reinstall']} · skip {counts['skip']} · later {counts['later']}",
+        "",
+    ]
+
+    paths_label = "Related paths" if lang == "en" else "Kapcsolódó útvonalak"
+    steps_label = "Steps" if lang == "en" else "Lépések"
+
+    for decision in decision_order:
+        items = sorted(sections[decision], key=lambda c: c.get("component_name", "").lower())
+        lines.append(titles[decision])
+        lines.append("")
+        if not items:
+            lines.append("- [ ] _(none)_")
+            lines.append("")
+            continue
+        for comp in items:
+            name = comp.get("component_name", comp.get("component_id", "?"))
+            comp_type = comp.get("type", "?")
+            lines.append(f"- [ ] **{name}** (`{comp_type}`)")
+            related = comp.get("related_paths") or []
+            if related:
+                lines.append(f"  - **{paths_label}:**")
+                for row in related[:8]:
+                    path = row.get("path", "")
+                    size = row.get("size_human", "?")
+                    lines.append(f"    - `{path}` ({size})")
+                if len(related) > 8:
+                    lines.append(f"    - … +{len(related) - 8} more")
+            steps = comp.get("install_steps") or []
+            if steps:
+                lines.append(f"  - **{steps_label}:**")
+                for idx, step in enumerate(steps[:6], start=1):
+                    lines.append(f"    {idx}. {step}")
+            summary = comp.get("summary")
+            if summary:
+                lines.append(f"  - {summary}")
+        lines.append("")
+
+    if manifest and manifest.get("components"):
+        restore_label = "Automated restore on new Mac" if lang == "en" else "Automatikus restore az új Mac-en"
+        lines.extend(["", f"## {restore_label}", ""])
+        lines.append("```bash")
+        lines.append("bash ~/migration-inventory/restore.sh")
+        lines.append("```")
+        lines.append("")
+
+    plan_json = {
+        "generated_from": {"analysis_mode": analysis.get("mode")},
+        "mode": "interactive_components",
+        "lang": lang,
+        "counts": counts,
+        "sections": sections,
+        "component_count": len(components),
+    }
+    return lines, plan_json
 
 
 def load_restore_manifest(inventory_dir: Path) -> dict | None:
@@ -111,6 +226,9 @@ def build_plan(
     interactive: dict | None = None,
     manifest: dict | None = None,
 ) -> tuple[list[str], dict]:
+    if analysis.get("components_en") or analysis.get("components_hu"):
+        return build_interactive_component_plan(analysis, lang, other_md_name, manifest)
+
     results = analysis.get("results", [])
     by_category: dict[str, list[dict]] = {
         "user_custom": [],

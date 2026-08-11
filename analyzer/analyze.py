@@ -34,9 +34,11 @@ from rule_based import reason_for_lang
 
 try:
     from interactive import decision_to_folder_results, run_interactive_session
+    from interactive_report import write_interactive_reports
 except ImportError:
     run_interactive_session = None  # type: ignore[misc, assignment]
     decision_to_folder_results = None  # type: ignore[misc, assignment]
+    write_interactive_reports = None  # type: ignore[misc, assignment]
 
 # Agent Platform — global Gemini 3.5 Flash Lite (override with --model / --location / --project)
 MODEL_ID = "gemini-3.5-flash-lite"
@@ -400,10 +402,38 @@ def main() -> None:
         action="store_true",
         help="Skip prerequisite checks and API enable (ADC must already work)",
     )
+    parser.add_argument(
+        "--from-decisions",
+        action="store_true",
+        help="Regenerate analysis report from existing interactive-decisions.json (no LLM, no review)",
+    )
     args = parser.parse_args()
 
+    if args.from_decisions:
+        if write_interactive_reports is None:
+            print("ERROR: interactive report module unavailable.", file=sys.stderr)
+            sys.exit(1)
+        if not args.decisions.exists():
+            print(f"ERROR: decisions file not found: {args.decisions}", file=sys.stderr)
+            sys.exit(1)
+        store = json.loads(args.decisions.read_text(encoding="utf-8"))
+        inventory_dir = args.input.parent
+        meta = {
+            "generated_by": "analyzer/interactive_report.py",
+            "mode": "interactive_report",
+            "decisions_file": str(args.decisions),
+        }
+        write_interactive_reports(store, inventory_dir, args.output, args.output_json, meta)
+        md_paths = report_paths(args.output)
+        json_paths = report_paths(args.output_json)
+        print(t("en", "done_md", path=md_paths["en"]))
+        print(t("en", "done_md", path=md_paths["hu"]))
+        print(t("en", "done_json", path=json_paths["en"]))
+        print(t("en", "done_json", path=json_paths["hu"]))
+        return
+
     if args.interactive:
-        if run_interactive_session is None or decision_to_folder_results is None:
+        if run_interactive_session is None or write_interactive_reports is None:
             print("ERROR: interactive module unavailable.", file=sys.stderr)
             sys.exit(1)
         if args.fallback and not args.project:
@@ -424,19 +454,15 @@ def main() -> None:
             resume=not args.no_resume,
             min_size_mb=args.min_size_mb,
         )
-        all_results = decision_to_folder_results(store)
-        folders_by_path = {r["path"]: r for r in all_results if r.get("path")}
         meta = {
-            "generated_by": "analyzer/interactive.py",
+            "generated_by": "analyzer/interactive_report.py",
             "mode": "interactive_fallback" if args.fallback else "interactive",
             "model": args.model if not args.fallback else None,
             "project": args.project if not args.fallback else None,
             "location": args.location if not args.fallback else None,
             "decisions_file": str(args.decisions),
         }
-        write_bilingual_reports(
-            all_results, folders_by_path, args.output, args.output_json, meta
-        )
+        write_interactive_reports(store, inventory_dir, args.output, args.output_json, meta)
         md_paths = report_paths(args.output)
         json_paths = report_paths(args.output_json)
         print(t("en", "done_md", path=md_paths["en"]))
