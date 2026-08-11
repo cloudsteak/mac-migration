@@ -422,6 +422,7 @@ def main() -> None:
             fallback=args.fallback,
             skip_gcp_setup=args.skip_gcp_setup,
             resume=not args.no_resume,
+            min_size_mb=args.min_size_mb,
         )
         all_results = decision_to_folder_results(store)
         folders_by_path = {r["path"]: r for r in all_results if r.get("path")}

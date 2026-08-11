@@ -566,7 +566,7 @@ def scan_directory_children(
     try:
         entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
     except OSError:
-        return entries
+        return []
 
     for entry in entries:
         if entry.name in SKIP_ENTRY_NAMES:
@@ -935,6 +935,642 @@ def merge_components(items: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
+INTERACTIVE_SKIP_TYPES = frozenset(
+    {
+        "browser_extension",
+        "shell_alias",
+        "login_item",
+        "launch_agent",
+        "library_item",
+        "library_area",
+        "dotdir",
+        "dotfile",
+        "home_dir",
+        "home_file",
+        "inventory_path",
+        "system_path",
+        "system_root",
+        "hal_plugin",
+        "package_manager",
+        "editor_ide",
+        "auth_config",
+        "system_customization",
+    }
+)
+
+APPLE_SYSTEM_APPS = frozenset(
+    {
+        "App Store.app",
+        "Automator.app",
+        "Books.app",
+        "Calculator.app",
+        "Calendar.app",
+        "Chess.app",
+        "Clock.app",
+        "Contacts.app",
+        "Dictionary.app",
+        "FaceTime.app",
+        "FindMy.app",
+        "Font Book.app",
+        "Freeform.app",
+        "Home.app",
+        "Image Capture.app",
+        "Launchpad.app",
+        "Mail.app",
+        "Maps.app",
+        "Messages.app",
+        "Mission Control.app",
+        "Music.app",
+        "News.app",
+        "Notes.app",
+        "Passwords.app",
+        "Photo Booth.app",
+        "Photos.app",
+        "Podcasts.app",
+        "Preview.app",
+        "QuickTime Player.app",
+        "Reminders.app",
+        "Safari.app",
+        "Shortcuts.app",
+        "Siri.app",
+        "Stickies.app",
+        "Stocks.app",
+        "System Settings.app",
+        "TextEdit.app",
+        "Time Machine.app",
+        "Tips.app",
+        "TV.app",
+        "Utilities",
+        "VoiceMemos.app",
+        "Weather.app",
+        "iPhone Mirroring.app",
+    }
+)
+
+# Helper bundles / nested names that appear as top-level duplicates in inventory scans.
+APPLICATION_HELPER_NAMES = frozenset(
+    {
+        "App.app",
+        "Audio.app",
+        "Code.app",
+        "Studio.app",
+        "Suite.app",
+        "Editor.app",
+        "Access.app",
+        "Active.app",
+        "Hub.app",
+        "Portal.app",
+        "Depot.app",
+        "Deck.app",
+        "OEM.app",
+        "Screen.app",
+        "Wallet.app",
+        "Docs.app",
+        "Sheets.app",
+        "Slides.app",
+        "2.app",
+        "9.app",
+    }
+)
+
+MAIN_EXTENSION_KEYWORDS = (
+    "python",
+    "pylance",
+    "pyright",
+    "csharp",
+    "dotnet",
+    "docker",
+    "terraform",
+    "aws",
+    "azure",
+    "kubernetes",
+    "kubectl",
+    "helm",
+    "github",
+    "copilot",
+    "claude",
+    "cursor",
+    "prettier",
+    "eslint",
+    "remote-ssh",
+    "remote-containers",
+    "openapi",
+    "swagger",
+    "sql",
+    "postgres",
+    "redis",
+    "golang",
+    "rust",
+    "java",
+    "yaml",
+    "shell",
+    "powershell",
+    "biome",
+    "makefile",
+    "boto3",
+    "codex",
+)
+
+EXTENSION_NOISE_KEYWORDS = (
+    "theme",
+    "icon-theme",
+    "color-theme",
+    "language-pack",
+    "snippets",
+    "colorizer",
+    "material-icon",
+    "symbols",
+)
+
+IMPORTANT_APP_MARKERS = (
+    "microsoft",
+    "adobe",
+    "google",
+    "jetbrains",
+    "ableton",
+    "docker",
+    "cursor",
+    "claude",
+    "xcode",
+    "logic pro",
+    "final cut",
+    "davinci",
+    "spitfire",
+    "native instruments",
+    "pioneer",
+    "rekordbox",
+    "serato",
+    "traktor",
+    "steam",
+    "slack",
+    "discord",
+    "zoom",
+    "teams",
+    "1password",
+    "bitwarden",
+    "parallels",
+    "vmware",
+    "virtualbox",
+    "chrome",
+    "firefox",
+    "brave",
+    "arc",
+    "visual studio",
+    "insomnia",
+    "postman",
+    "figma",
+    "miro",
+    "notion",
+    "obsidian",
+    "raycast",
+    "alfred",
+    "iterm",
+    "warp",
+    "codex",
+    "ollama",
+    "onedrive",
+    "dropbox",
+)
+
+MAIN_BREW_FORMULAE = frozenset(
+    {
+        "git",
+        "node",
+        "python",
+        "go",
+        "rust",
+        "ruby",
+        "kubectl",
+        "helm",
+        "terraform",
+        "awscli",
+        "azure-cli",
+        "gh",
+        "docker",
+        "docker-compose",
+        "postgresql",
+        "redis",
+        "sqlite",
+        "jq",
+        "yq",
+        "ripgrep",
+        "fd",
+        "bat",
+        "fzf",
+        "tmux",
+        "neovim",
+        "vim",
+        "shellcheck",
+        "pre-commit",
+        "pyenv",
+        "nvm",
+        "rbenv",
+        "gcloud-cli",
+    }
+)
+
+INTERACTIVE_SKIP_PROFILED_PARTS = (
+    "/.vscode/extensions/",
+    "/.cursor/extensions/",
+    "/node_modules/",
+    "/Library/Caches/",
+    "/Library/Logs/",
+    "/Library/Application Support/CrashReporter/",
+)
+
+
+def _interactive_group_component(
+    *,
+    comp_id: str,
+    comp_type: str,
+    name: str,
+    members: list[dict],
+    source: str = "grouped",
+    tags: list[str] | None = None,
+    profile_extra: dict | None = None,
+) -> dict:
+    paths = sorted({p for member in members for p in (member.get("paths") or []) if p})
+    profile: dict = {
+        "member_count": len(members),
+        "member_ids": [member["id"] for member in members],
+        "members_preview": [
+            {
+                "id": member["id"],
+                "name": member.get("name"),
+                "type": member.get("type"),
+            }
+            for member in members[:40]
+        ],
+    }
+    if len(members) > 40:
+        profile["members_truncated"] = len(members) - 40
+    if profile_extra:
+        profile.update(profile_extra)
+    return _component(
+        comp_id=comp_id,
+        comp_type=comp_type,
+        name=name,
+        source=source,
+        paths=paths,
+        sensitive=any(member.get("sensitive") for member in members),
+        profile=profile,
+        tags=tags or [],
+    )
+
+
+def _profiled_folder_size(comp: dict) -> int:
+    return int(
+        comp.get("total_size_bytes")
+        or (comp.get("profile") or {}).get("size_bytes")
+        or 0
+    )
+
+
+def _skip_profiled_folder_path(path: str) -> bool:
+    return any(part in path for part in INTERACTIVE_SKIP_PROFILED_PARTS)
+
+
+def _priority_context(components: list[dict]) -> dict:
+    tool_app_paths: set[str] = set()
+    tool_app_names: set[str] = set()
+    tool_clis: set[str] = set()
+    cask_names: set[str] = set()
+    for comp in components:
+        comp_type = comp.get("type", "")
+        if comp_type == "homebrew_cask":
+            cask_names.add(comp.get("name", "").lower())
+        if not comp_type.startswith("tool_"):
+            continue
+        profile = comp.get("profile") or {}
+        for app_path in profile.get("applications") or []:
+            tool_app_paths.add(app_path)
+            tool_app_names.add(Path(app_path).name)
+        cli = profile.get("cli")
+        if cli:
+            tool_clis.add(str(cli).lower())
+    return {
+        "tool_app_paths": tool_app_paths,
+        "tool_app_names": tool_app_names,
+        "tool_clis": tool_clis,
+        "cask_names": cask_names,
+    }
+
+
+def _is_helper_application(name: str, all_names: set[str]) -> bool:
+    if name.startswith("com.microsoft.package."):
+        return True
+    if name in {"Google Docs.app", "Google Sheets.app", "Google Slides.app"}:
+        return True
+    if name in APPLICATION_HELPER_NAMES:
+        return True
+    base = name.removesuffix(".app")
+    if base.isdigit() or len(base) <= 2:
+        return True
+    for other in all_names:
+        if other == name:
+            continue
+        other_base = other.removesuffix(".app")
+        if base in other_base and len(other_base) > len(base):
+            return True
+    return False
+
+
+def _is_main_application(comp: dict, *, all_names: set[str], priority: dict) -> bool:
+    name = comp.get("name", "")
+    path = (comp.get("paths") or [""])[0]
+    base = name.removesuffix(".app")
+    base_lower = base.lower()
+    if name in APPLE_SYSTEM_APPS:
+        return False
+    if _is_helper_application(name, all_names):
+        return False
+    if path in priority["tool_app_paths"] or name in priority["tool_app_names"]:
+        return True
+    if comp.get("source") == "user":
+        return True
+    for cask in priority["cask_names"]:
+        if cask and (cask in base_lower or base_lower in cask):
+            return True
+    if any(marker in base_lower for marker in IMPORTANT_APP_MARKERS):
+        return True
+    return False
+
+
+def _is_main_homebrew(comp: dict, priority: dict) -> bool:
+    if comp.get("type") == "homebrew_cask":
+        return True
+    name = comp.get("name", "").lower()
+    if name in MAIN_BREW_FORMULAE:
+        return True
+    for cli in priority["tool_clis"]:
+        if cli and (cli in name or name in cli):
+            return True
+    return False
+
+
+def _extension_id(comp: dict) -> str:
+    profile = comp.get("profile") or {}
+    ext_id = profile.get("id") or comp.get("id", "").removeprefix("vscode_ext:")
+    return str(ext_id).lower()
+
+
+def _extension_priority(comp: dict) -> int:
+    ext_id = _extension_id(comp)
+    name = (comp.get("name") or "").lower()
+    if not name or "%" in name:
+        return -100
+    haystack = f"{ext_id} {name}"
+    if any(noise in haystack for noise in EXTENSION_NOISE_KEYWORDS):
+        return -100
+    score = 0
+    for keyword in MAIN_EXTENSION_KEYWORDS:
+        if keyword in haystack:
+            score += 10
+    if comp.get("source") in ("Visual Studio Code", "Cursor"):
+        score += 1
+    return score
+
+
+def _is_main_extension(comp: dict) -> bool:
+    return _extension_priority(comp) > 0
+
+
+def _select_main_extensions(extensions: list[dict], *, limit: int = 30) -> tuple[list[dict], list[dict]]:
+    ranked = sorted(extensions, key=lambda comp: (-_extension_priority(comp), comp.get("name", "").lower()))
+    main = [comp for comp in ranked if _is_main_extension(comp)][:limit]
+    main_ids = {comp["id"] for comp in main}
+    other = [comp for comp in extensions if comp["id"] not in main_ids]
+    return main, other
+
+
+def consolidate_for_interactive(
+    components: list[dict],
+    *,
+    min_size_bytes: int = 100 * 1024 * 1024,
+    max_profiled_folders: int = 150,
+) -> list[dict]:
+    """
+    Reduce full discovery to a human-scale review queue focused on main apps,
+    packages, and extensions. Secondary items are grouped, not dropped.
+    """
+    priority = _priority_context(components)
+    result: list[dict] = []
+    profiled_candidates: list[dict] = []
+    applications: list[dict] = []
+    homebrew_main: list[dict] = []
+    homebrew_other: list[dict] = []
+    vscode_extensions: list[dict] = []
+    shell_aliases: list[dict] = []
+    login_items: list[dict] = []
+    launch_agents: list[dict] = []
+    browser_ext_by_browser: dict[str, list[dict]] = {}
+
+    for comp in components:
+        comp_type = comp.get("type", "")
+
+        if comp_type == "application":
+            applications.append(comp)
+            continue
+
+        if comp_type == "vscode_extension":
+            vscode_extensions.append(comp)
+            continue
+
+        if comp_type in ("homebrew_formula", "homebrew_cask"):
+            if _is_main_homebrew(comp, priority):
+                homebrew_main.append(comp)
+            else:
+                homebrew_other.append(comp)
+            continue
+
+        if comp_type in INTERACTIVE_SKIP_TYPES:
+            if comp_type == "shell_alias":
+                shell_aliases.append(comp)
+            elif comp_type == "login_item":
+                login_items.append(comp)
+            elif comp_type == "launch_agent":
+                launch_agents.append(comp)
+            elif comp_type == "browser_extension":
+                browser = (comp.get("profile") or {}).get("browser") or comp.get("name", "?").split(":", 1)[0]
+                browser_ext_by_browser.setdefault(browser.strip(), []).append(comp)
+            continue
+
+        if comp_type.startswith("custom_"):
+            continue
+
+        if comp_type == "profiled_folder":
+            path = (comp.get("paths") or [""])[0]
+            if _skip_profiled_folder_path(path):
+                continue
+            if comp.get("sensitive") or _profiled_folder_size(comp) >= min_size_bytes:
+                profiled_candidates.append(comp)
+            continue
+
+        if comp_type == "version_manager" and comp.get("source") != "environment-snapshot":
+            continue
+
+        result.append(comp)
+
+    app_names = {comp.get("name", "") for comp in applications}
+    main_apps: list[dict] = []
+    other_apps: list[dict] = []
+    for comp in applications:
+        if _is_main_application(comp, all_names=app_names, priority=priority):
+            main_apps.append(comp)
+        else:
+            other_apps.append(comp)
+    result.extend(main_apps)
+
+    result.extend(homebrew_main)
+
+    main_ext, other_ext = _select_main_extensions(vscode_extensions)
+    result.extend(main_ext)
+
+    if profiled_candidates:
+        profiled_candidates.sort(key=lambda comp: -_profiled_folder_size(comp))
+        result.extend(profiled_candidates[:max_profiled_folders])
+        overflow = profiled_candidates[max_profiled_folders:]
+        if overflow:
+            total_bytes = sum(_profiled_folder_size(comp) for comp in overflow)
+            result.append(
+                _interactive_group_component(
+                    comp_id="group:profiled_folders_overflow",
+                    comp_type="profiled_folders_group",
+                    name=(
+                        f"Other large folders ({len(overflow)} folders ≥ "
+                        f"{min_size_bytes // (1024 * 1024)} MB, {_human_size(total_bytes)})"
+                    ),
+                    members=overflow,
+                    source="collector",
+                    tags=["profiled"],
+                    profile_extra={
+                        "min_size_bytes": min_size_bytes,
+                        "total_size_bytes": total_bytes,
+                        "total_size_human": _human_size(total_bytes),
+                    },
+                )
+            )
+
+    if other_apps:
+        result.append(
+            _interactive_group_component(
+                comp_id="group:applications_other",
+                comp_type="applications_group",
+                name=f"Other applications ({len(other_apps)})",
+                members=other_apps,
+                source="applications",
+                tags=["application"],
+            )
+        )
+
+    if homebrew_other:
+        result.append(
+            _interactive_group_component(
+                comp_id="group:homebrew_other",
+                comp_type="homebrew_group",
+                name=f"Other Homebrew formulae ({len(homebrew_other)})",
+                members=homebrew_other,
+                source="homebrew-inventory",
+                tags=["homebrew", "formula"],
+                profile_extra={
+                    "restore_note": "Reinstall via Brewfile / restore.sh homebrew step.",
+                },
+            )
+        )
+
+    if other_ext:
+        by_editor: dict[str, list[dict]] = {}
+        for comp in other_ext:
+            editor = comp.get("source", "editor")
+            by_editor.setdefault(editor, []).append(comp)
+        for editor, extensions in sorted(by_editor.items()):
+            result.append(
+                _interactive_group_component(
+                    comp_id=f"group:vscode_ext_other:{editor.lower().replace(' ', '_')}",
+                    comp_type="vscode_extensions_group",
+                    name=f"Other {editor} extensions ({len(extensions)})",
+                    members=extensions,
+                    source=editor,
+                    tags=["vscode_extension"],
+                    profile_extra={
+                        "editor": editor,
+                        "extension_names": [member.get("name") for member in extensions[:30]],
+                    },
+                )
+            )
+
+    if shell_aliases:
+        result.append(
+            _interactive_group_component(
+                comp_id="group:shell_aliases",
+                comp_type="shell_aliases_group",
+                name=f"Shell aliases ({len(shell_aliases)})",
+                members=shell_aliases,
+                source="environment-snapshot",
+                tags=["shell", "alias"],
+                profile_extra={
+                    "aliases": [
+                        {
+                            "name": (member.get("profile") or {}).get("definition")
+                            or member.get("name"),
+                            "source": member.get("source"),
+                        }
+                        for member in shell_aliases[:30]
+                    ],
+                },
+            )
+        )
+
+    if login_items:
+        result.append(
+            _interactive_group_component(
+                comp_id="group:login_items",
+                comp_type="login_items_group",
+                name=f"Login items ({len(login_items)})",
+                members=login_items,
+                source="system-inventory",
+                tags=["login", "startup"],
+            )
+        )
+
+    if launch_agents:
+        result.append(
+            _interactive_group_component(
+                comp_id="group:launch_agents",
+                comp_type="launch_agents_group",
+                name=f"LaunchAgents ({len(launch_agents)})",
+                members=launch_agents,
+                source="system-inventory",
+                tags=["launchd", "background"],
+            )
+        )
+
+    for browser, extensions in sorted(browser_ext_by_browser.items()):
+        result.append(
+            _interactive_group_component(
+                comp_id=f"group:browser_ext:{browser.lower().replace(' ', '_')}",
+                comp_type="browser_extensions_group",
+                name=f"{browser} extensions ({len(extensions)})",
+                members=extensions,
+                source="system-inventory",
+                tags=["browser", "extension"],
+                profile_extra={
+                    "browser": browser,
+                    "extension_names": [member.get("name") for member in extensions[:30]],
+                },
+            )
+        )
+
+    result.sort(
+        key=lambda c: (
+            -(c.get("total_size_bytes") or 0),
+            c.get("type", ""),
+            c.get("name", "").lower(),
+        )
+    )
+    return result
+
+
 def discover_components(
     inventory_dir: Path,
     collector_folders: list[dict] | None = None,
@@ -1015,11 +1651,32 @@ def group_components(components: list[dict]) -> list[tuple[str, list[dict]]]:
         first_path = paths[0] if paths else ""
         tags = comp.get("tags") or []
 
-        if comp_type == "vscode_extension":
+        if comp_type in ("vscode_extension", "vscode_editor"):
             buckets["VS Code / Cursor extensions"].append(comp)
             continue
-        if comp_type == "vscode_editor":
+        if comp_type == "vscode_extensions_group":
             buckets["VS Code / Cursor extensions"].append(comp)
+            continue
+        if comp_type == "applications_group":
+            buckets["Applications"].append(comp)
+            continue
+        if comp_type == "homebrew_group":
+            buckets["Homebrew packages (all)"].append(comp)
+            continue
+        if comp_type == "browser_extensions_group":
+            buckets["Browser extensions"].append(comp)
+            continue
+        if comp_type == "shell_aliases_group":
+            buckets["Shell aliases & runtimes"].append(comp)
+            continue
+        if comp_type == "login_items_group":
+            buckets["Login items & startup"].append(comp)
+            continue
+        if comp_type == "launch_agents_group":
+            buckets["Background services & agents"].append(comp)
+            continue
+        if comp_type == "profiled_folders_group":
+            buckets["Profiled folders — home"].append(comp)
             continue
         if comp_type in ("quick_action_workflow", "shortcuts_app"):
             buckets["Quick Actions (Automator + Shortcuts)"].append(comp)

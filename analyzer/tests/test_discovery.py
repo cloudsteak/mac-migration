@@ -11,10 +11,12 @@ sys.path.insert(0, str(ANALYZER_DIR))
 
 from discovery import (  # noqa: E402
     components_from_collector_folders,
+    consolidate_for_interactive,
     discover_components,
     discovery_summary,
     merge_components,
     parse_applications_md,
+    scan_directory_children,
     scan_home_all_entries,
 )
 
@@ -64,6 +66,163 @@ def test_all_collector_folders_become_components(tmp_path: Path):
     summary = discovery_summary(components)
     assert summary["profiled_folders"] == 3
     assert summary["total_components"] >= 3
+
+
+def test_scan_directory_children_permission_denied(tmp_path: Path, monkeypatch):
+    blocked = tmp_path / "Mail"
+    blocked.mkdir()
+
+    def raise_permission(self):
+        raise PermissionError("[Errno 1] Operation not permitted")
+
+    monkeypatch.setattr(Path, "iterdir", raise_permission)
+    assert scan_directory_children(blocked, comp_type="library_item", source="test", prefix="mail") == []
+
+
+def test_consolidate_for_interactive_groups_noise(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+
+    components = [
+        {
+            "id": "editor:vscode",
+            "type": "vscode_editor",
+            "name": "VS Code",
+            "source": "vscode-extensions",
+            "paths": [str(home / ".vscode")],
+            "profile": {"extension_count": 3, "extensions": [{"id": "a"}, {"id": "b"}, {"id": "c"}]},
+            "tags": ["editor"],
+        },
+        {
+            "id": "vscode_ext:ms-python.python",
+            "type": "vscode_extension",
+            "name": "Python",
+            "source": "Visual Studio Code",
+            "paths": [str(home / ".vscode/extensions/ms-python.python")],
+            "profile": {"id": "ms-python.python"},
+            "tags": ["vscode_extension"],
+        },
+        {
+            "id": "vscode_ext:random.theme-pack",
+            "type": "vscode_extension",
+            "name": "Neon Theme Pack",
+            "source": "Visual Studio Code",
+            "paths": [],
+            "profile": {"id": "random.theme-pack"},
+            "tags": ["vscode_extension"],
+        },
+        {
+            "id": "brew:formula:git",
+            "type": "homebrew_formula",
+            "name": "git",
+            "source": "homebrew-inventory",
+            "paths": [],
+            "profile": {},
+            "tags": ["homebrew"],
+        },
+        {
+            "id": "brew:formula:libunistring",
+            "type": "homebrew_formula",
+            "name": "libunistring",
+            "source": "homebrew-inventory",
+            "paths": [],
+            "profile": {},
+            "tags": ["homebrew"],
+        },
+        {
+            "id": "brew:cask:firefox",
+            "type": "homebrew_cask",
+            "name": "firefox",
+            "source": "homebrew-inventory",
+            "paths": [],
+            "profile": {},
+            "tags": ["homebrew"],
+        },
+        {
+            "id": "app:Docker.app",
+            "type": "application",
+            "name": "Docker.app",
+            "source": "system",
+            "paths": ["/Applications/Docker.app"],
+            "tags": ["application"],
+        },
+        {
+            "id": "app:App.app",
+            "type": "application",
+            "name": "App.app",
+            "source": "system",
+            "paths": ["/Applications/App.app"],
+            "tags": ["application"],
+        },
+        {
+            "id": "alias:ll",
+            "type": "shell_alias",
+            "name": "alias ll",
+            "source": ".zshrc",
+            "paths": [],
+            "profile": {"definition": "ll='ls -la'"},
+            "tags": ["shell"],
+        },
+        {
+            "id": "folder:small",
+            "type": "profiled_folder",
+            "name": "small",
+            "source": "collector",
+            "paths": [str(home / "small")],
+            "profile": {"size_bytes": 1024},
+            "total_size_bytes": 1024,
+            "tags": ["profiled"],
+        },
+        {
+            "id": "folder:large",
+            "type": "profiled_folder",
+            "name": "large",
+            "source": "collector",
+            "paths": [str(home / "large")],
+            "profile": {"size_bytes": 200 * 1024 * 1024},
+            "total_size_bytes": 200 * 1024 * 1024,
+            "tags": ["profiled"],
+        },
+        {
+            "id": "browser_ext:Chrome:abc",
+            "type": "browser_extension",
+            "name": "Chrome: uBlock",
+            "source": "system-inventory",
+            "paths": [],
+            "profile": {"browser": "Chrome", "name": "uBlock"},
+            "tags": ["browser"],
+        },
+        {
+            "id": "custom:/Users/x/.cache",
+            "type": "custom_home_dotdir",
+            "name": ".cache",
+            "source": "custom-paths",
+            "paths": [str(home / ".cache")],
+            "profile": {},
+            "tags": ["custom"],
+        },
+    ]
+
+    review = consolidate_for_interactive(components, min_size_bytes=100 * 1024 * 1024)
+    types = {item["type"] for item in review}
+    names = {item["name"] for item in review}
+
+    assert "vscode_extension" in types
+    assert "homebrew_formula" in types
+    assert "homebrew_cask" in types
+    assert "application" in types
+    assert "applications_group" in types
+    assert "shell_alias" not in types
+    assert "browser_extension" not in types
+    assert "custom_home_dotdir" not in types
+    assert "vscode_editor" in types
+    assert "Python" in names
+    assert "Docker.app" in names
+    assert "App.app" not in {item["name"] for item in review if item["type"] == "application"}
+    assert any("Other Homebrew formulae" in name for name in names)
+    assert any("Other Visual Studio Code extensions" in name for name in names)
+    assert any(item["name"] == "large" for item in review)
+    assert not any(item["name"] == "small" for item in review)
 
 
 def test_merge_components_prefers_existing():

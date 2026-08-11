@@ -8,7 +8,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from discovery import discover_components, discovery_summary, group_components
+from discovery import (
+    consolidate_for_interactive,
+    discover_components,
+    discovery_summary,
+    group_components,
+)
 from i18n import t
 from llm_client import generate_content_with_retries
 
@@ -247,6 +252,7 @@ def run_interactive_session(
     fallback: bool = False,
     skip_gcp_setup: bool = False,
     resume: bool = True,
+    min_size_mb: int = 100,
 ) -> dict:
     from gcp_setup import ensure_gcp_ready
 
@@ -258,12 +264,19 @@ def run_interactive_session(
         if not skip_gcp_setup:
             ensure_gcp_ready(project)
 
-    components = discover_components(inventory_dir)
-    if not components:
+    all_components = discover_components(inventory_dir)
+    if not all_components:
         print("ERROR: No components discovered. Run collector phase first.", file=sys.stderr)
         sys.exit(1)
 
-    summary = discovery_summary(components)
+    min_size_bytes = min_size_mb * 1024 * 1024
+    components = consolidate_for_interactive(all_components, min_size_bytes=min_size_bytes)
+    if not components:
+        print("ERROR: No reviewable components after filtering.", file=sys.stderr)
+        sys.exit(1)
+
+    full_summary = discovery_summary(all_components)
+    review_summary = discovery_summary(components)
     store = load_decisions(decisions_path) if resume else {"decisions": {}, "meta": {}}
     store.setdefault("decisions", {})
     store["meta"] = {
@@ -271,7 +284,9 @@ def run_interactive_session(
         "mode": "interactive",
         "model": model if not fallback else None,
         "project": project if not fallback else None,
-        "discovery": summary,
+        "min_size_mb": min_size_mb,
+        "discovery_full": full_summary,
+        "discovery_review": review_summary,
     }
 
     flat: list[tuple[str, dict]] = []
@@ -280,13 +295,16 @@ def run_interactive_session(
             flat.append((group_title, comp))
 
     total = len(flat)
-    print("Interactive migration review — full machine discovery")
+    print("Interactive migration review")
     print(
-        f"  Components: {summary['total_components']} "
-        f"(profiled folders: {summary['profiled_folders']}, "
-        f"sensitive: {summary['sensitive_components']})"
+        f"  Review queue: {total} items "
+        f"(from {full_summary['total_components']} discovered; "
+        f"profiled folders ≥ {min_size_mb} MB or sensitive)"
     )
-    print(f"  Combined size (may overlap): {summary['total_size_human']}")
+    print(
+        f"  Focus: main apps, Homebrew casks/key formulae, key VS Code/Cursor extensions"
+    )
+    print(f"  Combined size (may overlap): {review_summary['total_size_human']}")
     print("Decisions saved after each item. [B] bulk-skips the rest of the current section.")
     print("Press Ctrl+C anytime to keep progress.\n")
 
