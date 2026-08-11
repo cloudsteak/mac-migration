@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install -r analyzer/requirements.txt
+
+      - name: Run pytest
+        run: pytest analyzer/tests/ viewer/tests/ planner/tests/ collector/tests/ -v
+
+      - name: Shellcheck collector scripts
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck collector/*.sh mac-migration
